@@ -1,0 +1,11 @@
+#define light_sensor_analog 2
+void setup() {
+  Serial.begin(115200);
+  pinMode(light_sensor_analog, INPUT);
+}
+void loop() {
+  int light_analog_value = analogRead(light_sensor_analog);
+  Serial.print("Light analog value: ");
+  Serial.println(light_analog_value);
+  delay(500);
+}
