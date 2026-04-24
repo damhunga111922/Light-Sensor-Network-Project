@@ -1,0 +1,82 @@
+#include <WiFi.h>
+#include <esp_now.h>
+#include <SPI.h>
+
+#define CS_PIN 5
+#define NODE_ID 1
+#define OUTPUT_PIN 26
+
+// MAC node gốc
+uint8_t masterAddress[] = {0x38, 0x18, 0x2B, 0xEA, 0x88, 0x30};
+
+typedef struct {
+  int id;
+  int ldr;
+} SensorData;
+
+SensorData data;
+
+// đọc MCP3008
+int readMCP3008(int channel) {
+  byte command = 0b00000001;
+  byte config = (0b1000 | channel) << 4;
+
+  digitalWrite(CS_PIN, LOW);
+  SPI.transfer(command);
+  byte highByte = SPI.transfer(config);
+  byte lowByte = SPI.transfer(0x00);
+  digitalWrite(CS_PIN, HIGH);
+
+  return ((highByte & 0x03) << 8) | lowByte;
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  SPI.begin(18, 19, 23, CS_PIN);
+  pinMode(CS_PIN, OUTPUT);
+
+  pinMode(OUTPUT_PIN, OUTPUT);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("ESP-NOW init FAILED");
+    return;
+  }
+
+  esp_now_peer_info_t peerInfo = {};
+  memcpy(peerInfo.peer_addr, masterAddress, 6);
+  peerInfo.channel = 0;
+  peerInfo.encrypt = false;
+
+  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+    Serial.println("Add peer FAILED");
+  }
+
+  data.id = NODE_ID;
+}
+
+void loop() {
+  // đọc cảm biến
+  data.ldr = readMCP3008(0);
+
+  // ===== LOGIC ĐẢO NGƯỠNG =====
+  if (data.ldr > 100) {
+    digitalWrite(OUTPUT_PIN, LOW);
+  } else {
+    digitalWrite(OUTPUT_PIN, HIGH);
+  }
+
+  // gửi về master
+  esp_now_send(masterAddress, (uint8_t *)&data, sizeof(data));
+
+  // debug
+  Serial.print("Node 1 | LDR: ");
+  Serial.print(data.ldr);
+  Serial.print(" | OUT: ");
+  Serial.println(data.ldr > 100 ? "LOW" : "HIGH");
+
+  delay(200);
+}
