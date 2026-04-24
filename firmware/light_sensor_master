@@ -1,0 +1,119 @@
+#include <WiFi.h>
+#include <esp_now.h>
+#include <SPI.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+#define CS_PIN 5
+#define NODE_ID 4
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+typedef struct {
+  int id;
+  int ldr;
+} SensorData;
+
+SensorData incoming;
+
+int ldr_values[5] = {0};
+unsigned long lastUpdate[5] = {0};
+unsigned long TIMEOUT = 3000;
+
+// ===== MCP3008 READ =====
+int readMCP3008(int channel) {
+  byte command = 0b00000001;
+  byte config = (0b1000 | channel) << 4;
+
+  digitalWrite(CS_PIN, LOW);
+  SPI.transfer(command);
+  byte highByte = SPI.transfer(config);
+  byte lowByte = SPI.transfer(0x00);
+  digitalWrite(CS_PIN, HIGH);
+
+  return ((highByte & 0x03) << 8) | lowByte;
+}
+
+// ===== ESP-NOW RECEIVE =====
+void onReceive(const uint8_t * mac, const uint8_t *incomingData, int len) {
+  memcpy(&incoming, incomingData, sizeof(incoming));
+  ldr_values[incoming.id] = incoming.ldr;
+  lastUpdate[incoming.id] = millis();
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // SPI MCP3008
+  SPI.begin(18, 19, 23, CS_PIN);
+  pinMode(CS_PIN, OUTPUT);
+
+  // ESP-NOW init
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("ESP-NOW Init Failed");
+    return;
+  }
+
+  esp_now_register_recv_cb(onReceive);
+
+  // LCD init
+  lcd.init();
+  lcd.backlight();
+
+  lcd.setCursor(0, 0);
+  lcd.print("SYSTEM START");
+  delay(1000);
+  lcd.clear();
+}
+
+void loop() {
+
+  // ===== ĐỌC NODE LOCAL (NODE 4) =====
+  ldr_values[NODE_ID] = readMCP3008(0);
+
+  // ===== TIMEOUT NODE 1-3 =====
+  for (int i = 1; i <= 3; i++) {
+    if (millis() - lastUpdate[i] > TIMEOUT) {
+      ldr_values[i] = 0;
+    }
+  }
+
+  // ===== HIỂN THỊ LCD 16x2 =====
+
+  // NODE 1 & 2 (dòng 1)
+  lcd.setCursor(0, 0);
+  lcd.print("1:");
+  lcd.print(ldr_values[1]);
+  lcd.print("   ");
+
+  lcd.setCursor(8, 0);
+  lcd.print("2:");
+  lcd.print(ldr_values[2]);
+  lcd.print("   ");
+
+  // NODE 3 & 4 (dòng 2)
+  lcd.setCursor(0, 1);
+  lcd.print("3:");
+  lcd.print(ldr_values[3]);
+  lcd.print("   ");
+
+  lcd.setCursor(8, 1);
+  lcd.print("4:");
+  lcd.print(ldr_values[4]);
+  lcd.print("   ");
+
+  // ===== DEBUG SERIAL =====
+  Serial.println("====== LIGHT MAP ======");
+  for (int i = 1; i <= 4; i++) {
+    Serial.print("Node ");
+    Serial.print(i);
+    Serial.print(": ");
+    Serial.println(ldr_values[i]);
+  }
+  Serial.println("======================\n");
+
+  delay(500);
+}
